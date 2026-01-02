@@ -24,6 +24,7 @@
   "dependencies": {
     "@babylonjs/core": "^8.44.0",
     "@babylonjs/loaders": "^8.44.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zustand": "^5.0.9"
   }
 }

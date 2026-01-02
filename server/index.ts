@@ -7,6 +7,7 @@ interface Player {
     ws: WebSocket;
     name: string;
     roomId: string | null;
+    isAlive?: boolean;
 }
 
 interface Room {
@@ -94,6 +95,31 @@ wss.on('connection', (ws: WebSocket) => {
 
     // Initial handshake
     ws.send(JSON.stringify({ type: 'init', data: { id: clientId } }));
+
+    // Heartbeat: Setup
+    player.isAlive = true;
+    ws.on('pong', () => {
+        player.isAlive = true;
+    });
+});
+
+// Heartbeat: Interval (Check for zombies every 3s)
+const interval = setInterval(() => {
+    players.forEach((player) => {
+        if (player.isAlive === false) {
+            console.log(`Terminating dead connection: ${player.id}`);
+            player.ws.terminate();
+            // Cleanup happens in 'close' event handler
+            return;
+        }
+
+        player.isAlive = false;
+        player.ws.ping();
+    });
+}, 3000);
+
+wss.on('close', () => {
+    clearInterval(interval);
 });
 
 function joinRoom(player: Player, roomId: string) {

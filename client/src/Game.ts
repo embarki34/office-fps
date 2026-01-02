@@ -1,3 +1,4 @@
+import { useGameStore } from "./store";
 import {
   Scene,
   Vector3,
@@ -38,6 +39,8 @@ export class Game {
   private headshotSound!: HTMLAudioElement;
   private readonly WIN_SCORE = 10;
   private lastMoveTime: number = 0;
+  private lastSentPosition: Vector3 = Vector3.Zero();
+  private lastSentRotation: Vector3 = Vector3.Zero();
   private remotePlayers: Map<string, Player> = new Map();
   private isShooting: boolean = false;
   private isHealing: boolean = false;
@@ -112,6 +115,12 @@ export class Game {
     this.isDead = false;
     this.kills = 0;
     this.controller.enabled = true;
+
+    // Apply Saved Sensitivity from Zustand
+    const savedSens = useGameStore.getState().sensitivity;
+    console.log(`Loading Sensitivity (Zustand): ${savedSens}`);
+    this.controller.setSensitivity(savedSens);
+
     this.controller.resetInput();
     this.controller.collider.position.set(0, 0.9, 0);
 
@@ -155,61 +164,93 @@ export class Game {
 
     // Add Glow Layer for neon pop
     const glow = new GlowLayer("glow", this.scene);
-    glow.intensity = 0.6;
+    glow.intensity = 0.4;
 
-    if (this.currentMapType === "lowpoly") {
-      this.setupLowPolyMap();
-    } else {
-      this.setupCyberpunkMap();
-    }
+    this.setupDeathmatchMap();
+    // if (this.currentMapType === "lowpoly") {
+    //   this.setupLowPolyMap();
+    // } else {
+    //   this.setupCyberpunkMap();
+    // }
   }
 
-  private setupLowPolyMap() {
+  private deathmatchSpawns: Vector3[] = [
+    new Vector3(25, 1, 25), new Vector3(-25, 1, -25),
+    new Vector3(25, 1, -25), new Vector3(-25, 1, 25),
+    new Vector3(0, 1, -28), new Vector3(0, 1, 28)
+  ];
+
+  private setupDeathmatchMap() {
+    // Clear Color: Clean Dark Blue
+    this.scene.clearColor = new Color3(0.05, 0.08, 0.12).toColor4();
+    this.scene.fogMode = Scene.FOGMODE_NONE; // Clear visibility
+
+    // Lighting: Balanced for visibility
     const ambient = new HemisphericLight("ambient", new Vector3(0, 1, 0), this.scene);
     ambient.intensity = 0.8;
-    this.scene.clearColor = new Color3(0.5, 0.7, 1.0).toColor4(); // Light blue sky
+    ambient.groundColor = new Color3(0.2, 0.2, 0.25);
 
-    const mapPath = "/models/maps/low_poly_map.glb";
-    const mapRoot = new Mesh("mapRoot", this.scene);
-    mapRoot.scaling.setAll(0.3);
+    const dirLight = new PointLight("sun", new Vector3(0, 30, 0), this.scene);
+    dirLight.intensity = 0.6;
 
-    SceneLoader.ImportMesh("", "", mapPath, this.scene, (meshes) => {
-      meshes.forEach(m => {
-        if (!m.parent) m.parent = mapRoot;
-        m.checkCollisions = true;
-        m.isPickable = true;
-        m.freezeWorldMatrix();
-      });
-    }, null, (s, msg) => {
-      console.error("Map Load Failed:", msg);
-    });
-  }
-
-  private setupCyberpunkMap() {
-    this.scene.clearColor = new Color3(0.01, 0.01, 0.05).toColor4();
-
-    // Lighting
-    const ambient = new HemisphericLight("ambient", new Vector3(0, 1, 0), this.scene);
-    ambient.intensity = 0.4;
-
-    // Arena
-    const ground = MeshBuilder.CreateGround("ground", { width: 60, height: 60 }, this.scene);
+    // --- GROUND ---
+    const ground = MeshBuilder.CreateGround("ground", { width: 64, height: 64 }, this.scene);
     const groundMat = new StandardMaterial("groundMat", this.scene);
-    groundMat.diffuseColor = new Color3(0.1, 0.1, 0.15);
+    groundMat.diffuseColor = new Color3(0.2, 0.2, 0.22); // Dark Neutral
+    groundMat.specularColor = new Color3(0.2, 0.2, 0.2);
     ground.material = groundMat;
     ground.checkCollisions = true;
 
-    // Walls
-    this.createWall("wall_n", new Vector3(0, 3, 30), new Vector3(60, 6, 1), new Color3(0.2, 0.2, 0.3), new Color3(0, 1, 1));
-    this.createWall("wall_s", new Vector3(0, 3, -30), new Vector3(60, 6, 1), new Color3(0.2, 0.2, 0.3), new Color3(0, 1, 1));
-    this.createWall("wall_e", new Vector3(30, 3, 0), new Vector3(1, 6, 60), new Color3(0.2, 0.2, 0.3), new Color3(0, 1, 1));
-    this.createWall("wall_w", new Vector3(-30, 3, 0), new Vector3(1, 6, 60), new Color3(0.2, 0.2, 0.3), new Color3(0, 1, 1));
+    // --- WALLS (Enclosed Arena) ---
+    // Outer walls at 30m radius (60x60 effective area)
+    this.createWall("wall_n", new Vector3(0, 4, 32), new Vector3(64, 8, 2), new Color3(0.3, 0.35, 0.4));
+    this.createWall("wall_s", new Vector3(0, 4, -32), new Vector3(64, 8, 2), new Color3(0.3, 0.35, 0.4));
+    this.createWall("wall_e", new Vector3(32, 4, 0), new Vector3(2, 8, 64), new Color3(0.3, 0.35, 0.4));
+    this.createWall("wall_w", new Vector3(-32, 4, 0), new Vector3(2, 8, 64), new Color3(0.3, 0.35, 0.4));
 
-    // Mid pillars
-    this.createBox("pillar_1", new Vector3(10, 3, 10), new Vector3(4, 6, 4), new Color3(0.3, 0.1, 0.3), new Color3(1, 0, 1));
-    this.createBox("pillar_2", new Vector3(-10, 3, 10), new Vector3(4, 6, 4), new Color3(0.3, 0.1, 0.3), new Color3(1, 0, 1));
-    this.createBox("pillar_3", new Vector3(10, 3, -10), new Vector3(4, 6, 4), new Color3(0.3, 0.1, 0.3), new Color3(1, 0, 1));
-    this.createBox("pillar_4", new Vector3(-10, 3, -10), new Vector3(4, 6, 4), new Color3(0.3, 0.1, 0.3), new Color3(1, 0, 1));
+    // --- CENTRAL COMBAT ZONE ---
+    // Two low crates for minor mid-cover
+    this.createBox("center_cover1", new Vector3(4, 1, 0), new Vector3(2, 2, 4), new Color3(0.8, 0.4, 0.0)); // Orange Team/Color
+    this.createBox("center_cover2", new Vector3(-4, 1, 0), new Vector3(2, 2, 4), new Color3(0.0, 0.4, 0.8)); // Blue Team/Color
+
+    // --- SIDE LANES & OBSTACLES ---
+
+    // Lane A (North-East Quadrant) - High Wall blocking Line of Sight
+    this.createWall("lane_block_ne", new Vector3(15, 3, 15), new Vector3(2, 6, 12), new Color3(0.5, 0.5, 0.55));
+
+    // Lane B (South-West Quadrant) - Series of low boxes for cover
+    this.createBox("lane_cover_sw1", new Vector3(-15, 1, -12), new Vector3(2, 2, 2), new Color3(0.4, 0.4, 0.4));
+    this.createBox("lane_cover_sw2", new Vector3(-18, 1, -18), new Vector3(2, 2, 2), new Color3(0.4, 0.4, 0.4));
+
+    // --- ELEVATED POSITION (South-East) ---
+    // Main Platform (Larger)
+    this.createBox("sniper_plat", new Vector3(20, 3, -20), new Vector3(12, 0.5, 12), new Color3(0.2, 0.25, 0.3));
+
+    // Ramp Access (Longer)
+    const ramp = MeshBuilder.CreateBox("ramp", { width: 4, height: 0.2, depth: 14 }, this.scene);
+    ramp.position.set(13, 1.5, -20);
+    ramp.rotation.z = Math.PI / 10; // Sloped
+    ramp.checkCollisions = true;
+    const rampMat = new StandardMaterial("rampMat", this.scene);
+    rampMat.diffuseColor = new Color3(0.3, 0.3, 0.35);
+    ramp.material = rampMat;
+
+    // Platform Hard Cover (Railing/Wall)
+    this.createWall("plat_cover", new Vector3(25, 4, -20), new Vector3(1, 2, 10), new Color3(0.5, 0.5, 0.55));
+  }
+
+  // Keeping old setups for reference or toggling if needed
+  private setupLowPolyMap() {
+    // ... (Old code, kept but unused for now)
+    const ambient = new HemisphericLight("ambient", new Vector3(0, 1, 0), this.scene);
+    ambient.intensity = 1.0;
+    this.scene.clearColor = new Color3(0.6, 0.8, 1.0).toColor4();
+  }
+
+  private setupCyberpunkMap() {
+    // ... (Old code kept for reference)
+    this.scene.clearColor = new Color3(0.02, 0.05, 0.2).toColor4();
+    this.createWall("wall_n", new Vector3(0, 3, 30), new Vector3(60, 6, 1), new Color3(0.1, 0.1, 0.2));
   }
 
   private createWall(name: string, pos: Vector3, size: Vector3, color: Color3, neonColor?: Color3) {
@@ -231,9 +272,39 @@ export class Game {
     const boxMat = new StandardMaterial(name + "Mat", this.scene);
     boxMat.diffuseColor = color;
     if (glowColor) {
-      boxMat.emissiveColor = glowColor.scale(0.3);
+      boxMat.emissiveColor = glowColor.scale(0.25);
     }
     box.material = boxMat;
+  }
+
+  private addCyberpunkLights() {
+    // Corner accent lights - Cyan
+    const light1 = new PointLight("light1", new Vector3(20, 2, 20), this.scene);
+    light1.diffuse = new Color3(0, 1, 1);
+    light1.intensity = 8;
+    light1.range = 25;
+
+    const light2 = new PointLight("light2", new Vector3(-20, 2, -20), this.scene);
+    light2.diffuse = new Color3(0, 1, 1);
+    light2.intensity = 8;
+    light2.range = 25;
+
+    // Corner accent lights - Magenta
+    const light3 = new PointLight("light3", new Vector3(20, 2, -20), this.scene);
+    light3.diffuse = new Color3(1, 0, 1);
+    light3.intensity = 8;
+    light3.range = 25;
+
+    const light4 = new PointLight("light4", new Vector3(-20, 2, 20), this.scene);
+    light4.diffuse = new Color3(1, 0, 1);
+    light4.intensity = 8;
+    light4.range = 25;
+
+    // Center overhead light - White/Blue
+    const centerLight = new PointLight("centerLight", new Vector3(0, 8, 0), this.scene);
+    centerLight.diffuse = new Color3(0.8, 0.9, 1.0);
+    centerLight.intensity = 12;
+    centerLight.range = 35;
   }
 
   private setupKeyboardListeners() {
@@ -250,7 +321,13 @@ export class Game {
       } else if (e.key === "4") {
         this.weapon.switchWeapon("sniper");
         this.showKillFeed("EQUIPPED SNIPER");
+        this.showKillFeed("EQUIPPED SNIPER");
         this.updateZoomSensitivity(); // Reset sensitivity on switch
+      } else if (e.key === "5") {
+        this.weapon.switchWeapon("pan");
+        this.showKillFeed("EQUIPPED PAN");
+      } else if (e.key === "0") {
+        this.weapon.toggleDebugUI();
       } else if (e.key === "r" || e.key === "R") {
         this.weapon.reload();
       } else if (e.key === "h" || e.key === "H") {
@@ -281,6 +358,42 @@ export class Game {
       } else if (e.button === 2) {
         // Toggle zoom off on release
         this.weapon.toggleZoom(false);
+        this.updateZoomSensitivity();
+      }
+    });
+
+    // Weapon Switching via Scroll Wheel
+    const weaponOrder = ["pistol", "smg", "ar", "sniper"];
+    const weaponNames = {
+      "pistol": "PISTOL",
+      "smg": "SMG",
+      "ar": "ASSAULT RIFLE",
+      "sniper": "SNIPER"
+    };
+
+    window.addEventListener("wheel", (e: WheelEvent) => {
+      if (!this.controller.enabled) return;
+
+      const currentIdx = weaponOrder.indexOf(this.weapon.currentType);
+      let newIdx = currentIdx;
+
+      if (e.deltaY > 0) {
+        // Scroll Down -> Next Weapon
+        newIdx = (currentIdx + 1) % weaponOrder.length;
+      } else {
+        // Scroll Up -> Previous Weapon
+        newIdx = (currentIdx - 1 + weaponOrder.length) % weaponOrder.length;
+      }
+
+      const newWeapon = weaponOrder[newIdx];
+      this.weapon.switchWeapon(newWeapon);
+
+      // Update UI/Feedback
+      // @ts-ignore
+      this.showKillFeed(`EQUIPPED ${weaponNames[newWeapon]}`);
+
+      // Reset zoom if switching from sniper, etc. handled by switchWeapon
+      if (newWeapon === "sniper") {
         this.updateZoomSensitivity();
       }
     });
@@ -367,59 +480,39 @@ export class Game {
     }
   }
 
-  private updateRemotePlayer(id: string, name: string, pos: any, rot: any, weaponType: string = "pistol", kills: number = 0) {
+  private updateRemotePlayer(id: string, name: string, pos: any, rot: any, weaponType?: string, kills: number = 0) {
     let player = this.remotePlayers.get(id);
+
     if (!player) {
-      player = new Player(id, name || `Player ${id}`);
-      player.kills = kills;
+      player = new Player(id, name);
 
-      // Invisible Hitbox
-      player.mesh = MeshBuilder.CreateBox(`player_${id}`, { width: 0.6, height: 2, depth: 0.6 }, this.scene);
-      player.mesh.position.y = 1;
-      player.mesh.visibility = 0; // Transparent but pickable
+      // --- PROCEDURAL PLAYER MESH (Pill + Visor) ---
+      // Body (Capsule)
+      const body = MeshBuilder.CreateCapsule(`player_${id}`, { height: 1.8, radius: 0.4 }, this.scene);
+      const bodyMat = new StandardMaterial("playerMat", this.scene);
+      bodyMat.diffuseColor = new Color3(0.2, 0.25, 0.3); // Tactical Grey/Blue
+      bodyMat.specularColor = new Color3(0.1, 0.1, 0.1);
+      body.material = bodyMat;
+      body.checkCollisions = true;
 
-      // Invisible Head Hitbox (Visor)
-      const visor = MeshBuilder.CreateBox(`visor_${id}`, { width: 0.4, height: 0.4, depth: 0.4 }, this.scene);
-      visor.position.y = 0.7; // Positioned at head level
-      visor.visibility = 0; // Transparent but pickable
-      visor.parent = player.mesh;
+      // Visor (Headshot Target)
+      const visor = MeshBuilder.CreateBox(`visor_${id}`, { width: 0.5, height: 0.2, depth: 0.3 }, this.scene);
+      visor.position.y = 0.5; // Eye level relative to center
+      visor.position.z = 0.25; // Slightly forward
+      visor.parent = body;
 
-      // Load 3D Model
-      SceneLoader.ImportMesh("", "models/", "playermodle.glb", this.scene, (meshes, particleSystems, skeletons, animationGroups) => {
-        if (!player!.mesh) return;
+      const visorMat = new StandardMaterial("visorMat", this.scene);
+      visorMat.diffuseColor = new Color3(0, 0, 0);
+      visorMat.emissiveColor = new Color3(0, 1, 1); // Neon Cyan Glow
+      visor.material = visorMat;
 
-        // Stop all automatic animations and store them
-        player!.animationGroups = animationGroups;
-        animationGroups.forEach(ag => {
-          console.log(`Animation Group found: ${ag.name}`);
-          ag.stop();
-        });
+      player.mesh = body;
 
-        // Find top level meshes (those with no parent in the loaded set)
-        meshes.forEach(m => {
-          if (!m.parent) {
-            m.setParent(player!.mesh!);
-          }
-          m.isPickable = false;
-        });
-
-        // Initial defaults (will be overridden by debug or final values)
-        const modelRoot = meshes[0];
-        if (modelRoot) {
-          // IMPORTANT: Babylon GLB loader uses rotationQuaternion by default.
-          // We must null it to use the .rotation Vector3 from our debug utility.
-          meshes.forEach(m => m.rotationQuaternion = null);
-
-          modelRoot.scaling.setAll(1); // Reset to base 1 for debugging
-          modelRoot.position.y = -1.7; // Updated as requested
-          modelRoot.rotation.x = 0;
-          modelRoot.rotation.y = 0; // Changed from Math.PI to fix "backwards" facing
-          modelRoot.rotation.z = 0;
-
-          // Tag it for the debug utility
-          modelRoot.name = "DEBUG_PLAYER_MODEL";
-        }
-      });
+      // Weapon Root (Attachment Point)
+      const weaponRoot = new Mesh("weaponRoot", this.scene);
+      weaponRoot.parent = body;
+      weaponRoot.position.set(0.3, 0.0, 0.4); // Right side, slightly forward
+      player.weaponMesh = weaponRoot; // Placeholder, real weapon loads below
 
       this.remotePlayers.set(id, player);
       this.createNametag(player.mesh, player.name);
@@ -427,7 +520,7 @@ export class Game {
 
     if (player.mesh && pos) {
       player.mesh.setEnabled(true);
-      player.targetPosition.set(pos.x, pos.y, pos.z);
+      player.targetPosition.set(pos.x, pos.y + 0.9, pos.z); // Center of capsule is at +0.9 (since pivot is center)
       player.targetRotation.set(rot.x, rot.y, rot.z);
 
       if (pos.isFirst) {
@@ -436,7 +529,8 @@ export class Game {
       }
     }
 
-    // Sync remote weapon
+    if (kills !== undefined) player.kills = kills;
+
     if (player && weaponType && player.currentWeaponType !== weaponType) {
       this.updateRemotePlayerWeapon(player, weaponType);
     }
@@ -445,9 +539,15 @@ export class Game {
   private updateRemotePlayerWeapon(player: Player, weaponType: string) {
     player.currentWeaponType = weaponType;
 
-    // Dispose old weapon if any
+    // Clear previous weapon visualization (children of the root)
     if (player.weaponMesh) {
-      player.weaponMesh.dispose();
+      player.weaponMesh.getChildren().forEach(c => c.dispose());
+    } else {
+      // Should exist from init, but safety check
+      const root = new Mesh("weaponRoot", this.scene);
+      root.parent = player.mesh || null;
+      root.position.set(0.3, 0.0, 0.4);
+      player.weaponMesh = root;
     }
 
     const config = WEAPON_CONFIGS[weaponType];
@@ -459,28 +559,16 @@ export class Game {
         return;
       }
 
-      // Create a clean root for the remote weapon
-      const weaponRoot = new Mesh("remoteWeaponRoot", this.scene);
-      weaponRoot.parent = player.mesh;
-
-      // Applied values from final debug session:
-      // Pos(-0.15, -0.45, 0.75), Rot(-0.19, 0.02, -2.12), ScaleMult: 2.4
-      weaponRoot.position.set(-0.15, -0.45, 0.75);
-      weaponRoot.rotation.set(-0.19, 0.02, -2.12);
-
       meshes.forEach(m => {
-        // Simple parenting to avoid world-matrix compensation issues
-        if (!m.parent || !meshes.includes(m.parent as AbstractMesh)) {
-          m.parent = weaponRoot;
-        }
+        m.parent = player.weaponMesh || null;
         m.isPickable = false;
         m.rotationQuaternion = null;
-        m.scaling.set(1, 1, 1); // Reset local scale to avoid inherited GLB scaling
+        m.scaling.set(1, 1, 1);
       });
 
-      weaponRoot.scaling.copyFrom(config.scale).scaleInPlace(2.4);
-
-      player.weaponMesh = weaponRoot;
+      // Adjust generic weapon hold
+      player.weaponMesh!.scaling.copyFrom(config.scale).scaleInPlace(2.0);
+      player.weaponMesh!.rotation.set(0, 0, 0); // Reset
     });
   }
 
@@ -605,10 +693,18 @@ export class Game {
     const hpUi = document.getElementById("hp-ui");
     if (hpUi) hpUi.innerText = `HP: 100`;
 
-    // Random ground position (expanded for original map)
-    const randomX = (Math.random() - 0.5) * 40;
-    const randomZ = (Math.random() - 0.5) * 40;
-    this.controller.collider.position.set(randomX, 0.9, randomZ);
+    // Pick a random spawn point from the Deathmatch list
+    const spawnIndex = Math.floor(Math.random() * this.deathmatchSpawns.length);
+    const spawnPos = this.deathmatchSpawns[spawnIndex];
+
+    // Add slight random offset to prevent exact stacking
+    const offsetX = (Math.random() - 0.5) * 2;
+    const offsetZ = (Math.random() - 0.5) * 2;
+
+    this.controller.collider.position.set(spawnPos.x + offsetX, spawnPos.y, spawnPos.z + offsetZ);
+
+    // Reset rotation (look towards center roughly)
+    this.controller.collider.lookAt(new Vector3(0, 1, 0));
   }
 
 
@@ -831,10 +927,11 @@ export class Game {
       #ammo-fill { background: linear-gradient(90deg, #00f2ff, #0061ff); }
 
       .kill-entry {
-        background: linear-gradient(90deg, rgba(255,255,255,0.1), transparent);
+        background: linear-gradient(-90deg, rgba(255,255,255,0.1), transparent);
         padding: 8px 15px;
         margin-bottom: 5px;
-        border-left: 3px solid var(--neon-cyan);
+        border-right: 3px solid var(--neon-cyan);
+        border-left: none;
         font-family: var(--hud-font);
         font-size: 14px;
         font-weight: 700;
@@ -842,7 +939,7 @@ export class Game {
       }
 
       @keyframes slideIn {
-        from { transform: translateX(-20px); opacity: 0; }
+        from { transform: translateX(20px); opacity: 0; }
         to { transform: translateX(0); opacity: 1; }
       }
 
@@ -1012,12 +1109,15 @@ export class Game {
     `;
     document.body.appendChild(weaponPod);
 
-    // Kill Feed (Top Left)
+    // Kill Feed (Top Right)
     const feed = document.createElement("div");
     feed.id = "kill-feed";
     feed.style.position = "absolute";
     feed.style.top = "100px";
-    feed.style.left = "30px";
+    feed.style.right = "30px"; // Moved to Right
+    feed.style.display = "flex";
+    feed.style.flexDirection = "column";
+    feed.style.alignItems = "flex-end"; // Right align items
     feed.style.pointerEvents = "none";
     document.body.appendChild(feed);
 
@@ -1223,12 +1323,25 @@ export class Game {
     }
 
     // Smoothly interpolate remote players and handle animations
+    const lerpFactor = 15.0 * (deltaTime / 1000.0); // Frame-rate independent smoothing
+
     this.remotePlayers.forEach(p => {
       if (p.mesh && p.mesh.isEnabled()) {
         const dist = Vector3.Distance(p.mesh.position, p.targetPosition);
 
-        p.mesh.position = Vector3.Lerp(p.mesh.position, p.targetPosition, 0.15);
-        p.mesh.rotation.y = this.lerpAngle(p.mesh.rotation.y, p.targetRotation.y, 0.15);
+        // Snap if too far (teleport/spawn)
+        if (dist > 5) {
+          p.mesh.position.copyFrom(p.targetPosition);
+          p.mesh.rotation.copyFrom(p.targetRotation);
+        } else {
+          p.mesh.position = Vector3.Lerp(p.mesh.position, p.targetPosition, lerpFactor);
+          p.mesh.rotation.y = this.lerpAngle(p.mesh.rotation.y, p.targetRotation.y, lerpFactor);
+
+          // Interpolate Visor Pitch (Head Up/Down)
+          if (p.visorMesh) {
+            p.visorMesh.rotation.x = this.lerpAngle(p.visorMesh.rotation.x, p.targetRotation.x, lerpFactor);
+          }
+        }
 
         // Animation logic based on distance moved (interpolated velocity)
         const isMoving = dist > 0.02;
@@ -1236,19 +1349,31 @@ export class Game {
       }
     });
 
-    // Broadcast position
+    // Broadcast position (Delta Compression)
     const now = Date.now();
-    if (this.localPlayerId && this.network && now - this.lastMoveTime > 30) {
-      this.lastMoveTime = now;
+    if (this.localPlayerId && this.network && this.controller.collider) {
       const pos = this.controller.collider.position;
       const rot = this.controller.camera.rotation;
 
-      this.network.send("move", {
-        name: this.playerName,
-        position: { x: Number(pos.x.toFixed(2)), y: Number(pos.y.toFixed(2)), z: Number(pos.z.toFixed(2)) },
-        rotation: { x: Number(rot.x.toFixed(2)), y: Number(rot.y.toFixed(2)), z: Number(rot.z.toFixed(2)) },
-        weaponType: this.weapon.currentType
-      });
+      // Check deltas
+      const dist = Vector3.Distance(pos, this.lastSentPosition);
+      const rotDiff = Vector3.Distance(rot, this.lastSentRotation); // Simple Vector dist for rotation check is enough
+      const timeDiff = now - this.lastMoveTime;
+
+      // Send if: Moved enough OR Rotated enough OR Keep-Alive (1s)
+      if (dist > 0.01 || rotDiff > 0.01 || timeDiff > 1000) {
+
+        this.lastMoveTime = now;
+        this.lastSentPosition.copyFrom(pos);
+        this.lastSentRotation.copyFrom(rot);
+
+        this.network.send("move", {
+          name: this.playerName,
+          position: { x: Number(pos.x.toFixed(2)), y: Number(pos.y.toFixed(2)), z: Number(pos.z.toFixed(2)) },
+          rotation: { x: Number(rot.x.toFixed(2)), y: Number(rot.y.toFixed(2)), z: Number(rot.z.toFixed(2)) },
+          weaponType: this.weapon.currentType
+        });
+      }
     }
 
     this.drawMinimap();

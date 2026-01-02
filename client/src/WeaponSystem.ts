@@ -1,4 +1,4 @@
-import { Scene, Ray, Vector3, MeshBuilder, StandardMaterial, Color3, SceneLoader, AbstractMesh, Camera, UniversalCamera } from "@babylonjs/core";
+import { Scene, Ray, Vector3, MeshBuilder, StandardMaterial, Color3, SceneLoader, AbstractMesh, Camera, UniversalCamera, Matrix } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
 import { FPSController } from "./FPSController";
 
@@ -11,6 +11,7 @@ export interface WeaponConfig {
     headshotMultiplier: number;
     rangeFalloff: number; // percentage damage retained at 50m
     isAutomatic: boolean;
+    isMelee?: boolean;
     reloadTime: number; // in ms
     modelPath: string;
     scale: Vector3;
@@ -94,6 +95,25 @@ export const WEAPON_CONFIGS: { [key: string]: WeaponConfig } = {
         recoilKick: 0.4,
         recoilRotation: 0.3,
         zoomFOV: 0.3, // Deep zoom for sniper
+        cameraShakeIntensity: 0.05
+    },
+    pan: {
+        name: "Frying Pan",
+        damage: 100,
+        fireRate: 800,
+        maxAmmo: 1,
+        mobility: 1.1,
+        headshotMultiplier: 1.0,
+        rangeFalloff: 1.0,
+        isAutomatic: false,
+        isMelee: true,
+        reloadTime: 0,
+        modelPath: "models/Pan.glb",
+        scale: new Vector3(0.5, 0.5, 0.5),
+        position: new Vector3(0, -0.2, 1.0), // Dead center, 1 unit forward
+        rotation: new Vector3(0, 0, 0),
+        recoilKick: 0,
+        recoilRotation: 0,
         cameraShakeIntensity: 0.05
     }
 };
@@ -240,19 +260,67 @@ export class WeaponSystem {
         }
 
         this.lastFireTime = now;
-        this.ammo--;
+        this.lastFireTime = now;
+        if (!config.isMelee) {
+            this.ammo--;
+        }
 
         // Visuals and Sound
-        this.gunshotSound.currentTime = 0;
-        this.gunshotSound.play().catch(() => { });
-        this.showMuzzleFlash();
+        // Different sound for Pan?
+        if (config.isMelee) {
+            // Maybe a "whoosh" sound? Using gunshot for now or empty.
+            this.gunshotSound.currentTime = 0;
+            this.gunshotSound.play().catch(() => { });
+        } else {
+            this.gunshotSound.currentTime = 0;
+            this.gunshotSound.play().catch(() => { });
+            this.showMuzzleFlash();
+        }
 
-        // Raycast
-        const ray = this.camera.getForwardRay(100);
-        const hit = this.scene.pickWithRay(ray);
+        // Raycast - Best Practice: Create picking ray from center of screen
+        const engine = this.scene.getEngine();
+        const canvas = engine.getRenderingCanvas();
 
-        if (hit && hit.hit) {
-            const meshName = hit.pickedMesh?.name || "";
+        let ray: Ray;
+        if (canvas) {
+            // Pixel-perfect center pick
+            ray = this.scene.createPickingRay(canvas.width / 2, canvas.height / 2, Matrix.Identity(), this.camera);
+        } else {
+            // Fallback for headless/no-canvas
+            ray = this.camera.getForwardRay(100);
+        }
+
+        // Filter out self and non-game objects
+        const predicate = (mesh: AbstractMesh) => {
+            return mesh !== this.controller.collider &&
+                mesh.name !== "skyBox" &&
+                mesh.isVisible &&
+                mesh.isPickable &&
+                mesh.name !== "muzzleFlash" &&
+                !mesh.name.startsWith("impact"); // Don't hit old bullet holes
+        };
+
+        const hit = this.scene.pickWithRay(ray, predicate);
+
+        // Calculate visual start point for tracer (approximate muzzle)
+        // User Feedback: Tracers from side causing parallax confusion.
+        // Fix: Move tracer start closer to center-screen (Doom/Quake style) for perfect visual alignment.
+        let tracerStart = this.camera.position.clone();
+
+        const forward = this.camera.getDirection(Vector3.Forward()).scale(0.8);
+        const down = this.camera.getDirection(Vector3.Down()).scale(0.1); // Slight drop to be below crosshair
+
+        tracerStart.addInPlace(forward).addInPlace(down);
+
+        const tracerEnd = (hit && hit.pickedPoint) ? hit.pickedPoint : ray.origin.add(ray.direction.scale(100));
+        this.createTracer(tracerStart, tracerEnd);
+
+        if (hit && hit.hit && hit.pickedMesh) {
+            const meshName = hit.pickedMesh.name || "";
+
+            // Console log for debugging hits
+            // console.log("Hit:", meshName);
+
             if (meshName.startsWith("player_") || meshName.startsWith("visor_")) {
                 const isHeadshot = meshName.startsWith("visor_");
                 const targetId = meshName.split("_")[1];
@@ -281,6 +349,30 @@ export class WeaponSystem {
         this.cameraShakeOffset.y = (Math.random() - 0.5) * config.cameraShakeIntensity;
 
         return true;
+    }
+
+    private createTracer(start: Vector3, end: Vector3) {
+        // Create a visual line
+        const tracer = MeshBuilder.CreateLines("tracer", {
+            points: [start, end],
+            updatable: false
+        }, this.scene);
+
+        tracer.color = new Color3(1, 0.9, 0.5); // Warm Yellow/Gold
+        tracer.isPickable = false;
+
+        // Simple fade out
+        let opacity = 1.0;
+        const fade = () => {
+            opacity -= 0.15;
+            tracer.alpha = opacity;
+            if (opacity <= 0) {
+                tracer.dispose();
+            } else {
+                requestAnimationFrame(fade);
+            }
+        };
+        requestAnimationFrame(fade);
     }
 
     public update(deltaTime: number) {
@@ -362,5 +454,76 @@ export class WeaponSystem {
         setTimeout(() => sphere.dispose(), 100);
     }
 
+    public toggleDebugUI() {
+        if (!this.gunMesh) return;
+
+        const existing = document.getElementById("weapon-debug");
+        if (existing) {
+            existing.remove();
+            return;
+        }
+
+        const container = document.createElement("div");
+        container.id = "weapon-debug";
+        container.style.position = "absolute";
+        container.style.top = "10px";
+        container.style.right = "250px"; // Left of killfeed
+        container.style.backgroundColor = "rgba(0,0,0,0.8)";
+        container.style.padding = "10px";
+        container.style.color = "white";
+        container.style.fontFamily = "monospace";
+        container.style.zIndex = "1000";
+
+        const config = this.config;
+
+        const createInput = (label: string, val: number, step: number, onChange: (v: number) => void) => {
+            const row = document.createElement("div");
+            row.style.marginBottom = "5px";
+            row.innerHTML = `<span style="display:inline-block;width:80px">${label}:</span>`;
+
+            const input = document.createElement("input");
+            input.type = "number";
+            input.step = step.toString();
+            input.value = val.toString();
+            input.style.width = "60px";
+            input.oninput = (e) => onChange(parseFloat((e.target as HTMLInputElement).value));
+
+            row.appendChild(input);
+            container.appendChild(row);
+        };
+
+        const updateMesh = () => {
+            if (!this.gunMesh) return;
+            this.gunMesh.position.copyFrom(config.position);
+            this.gunMesh.rotation.copyFrom(config.rotation);
+            this.gunMesh.scaling.copyFrom(config.scale);
+        };
+
+        container.innerHTML += "<h3>POS</h3>";
+        createInput("Pos X", config.position.x, 0.01, v => { config.position.x = v; updateMesh(); });
+        createInput("Pos Y", config.position.y, 0.01, v => { config.position.y = v; updateMesh(); });
+        createInput("Pos Z", config.position.z, 0.01, v => { config.position.z = v; updateMesh(); });
+
+        container.innerHTML += "<h3>ROT</h3>";
+        createInput("Rot X", config.rotation.x, 0.1, v => { config.rotation.x = v; updateMesh(); });
+        createInput("Rot Y", config.rotation.y, 0.1, v => { config.rotation.y = v; updateMesh(); });
+        createInput("Rot Z", config.rotation.z, 0.1, v => { config.rotation.z = v; updateMesh(); });
+
+        container.innerHTML += "<h3>SCALE</h3>";
+        createInput("Scale", config.scale.x, 0.01, v => { config.scale.setAll(v); updateMesh(); });
+
+        const btn = document.createElement("button");
+        btn.innerText = "Log to Console";
+        btn.onclick = () => {
+            console.log(`
+            position: new Vector3(${config.position.x}, ${config.position.y}, ${config.position.z}),
+            rotation: new Vector3(${config.rotation.x}, ${config.rotation.y}, ${config.rotation.z}),
+            scale: new Vector3(${config.scale.x}, ${config.scale.x}, ${config.scale.x}),
+            `);
+        };
+        container.appendChild(btn);
+
+        document.body.appendChild(container);
+    }
 }
 

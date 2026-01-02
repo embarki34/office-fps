@@ -1,15 +1,21 @@
 import { Network } from "./Network";
+import { useGameStore } from "./store";
 
 export class MenuSystem {
   private network: Network;
   private onJoinRoom: (roomId: string, status: string) => void;
   private playerName: string = "";
+  private sensitivity: number = 6;
   private container: HTMLDivElement;
 
   constructor(network: Network, onJoinRoom: (roomId: string, status: string) => void) {
     this.network = network;
     this.onJoinRoom = onJoinRoom;
     this.playerName = localStorage.getItem("playerName") || "Agent_" + Math.floor(Math.random() * 1000);
+    this.sensitivity = parseFloat(localStorage.getItem("sensitivity") || "6");
+
+    const old = document.getElementById("menu-container");
+    if (old) old.remove();
 
     this.container = document.createElement("div");
     this.container.id = "menu-container";
@@ -153,15 +159,25 @@ export class MenuSystem {
     document.head.appendChild(style);
   }
 
+
+
   public showMainMenu() {
     this.container.innerHTML = `
       <div class="main-content">
         <div class="side-panel glass-panel">
-          <h3>Local Storage</h3>
-          <p>Name:</p>
+          <h3>Settings</h3>
+          
+          <label style="font-size:12px; color:#aaa; margin-bottom:4px; display:block">USERNAME</label>
           <input type="text" id="player-name-input" class="input-field" value="${this.playerName}">
-          <p style="font-size: 12px; color: #888;">Saved in Local Storage</p>
+          
+          <div style="margin-top: 15px;">
+            <label style="font-size:12px; color:#aaa; margin-bottom:4px; display:block">SENSITIVITY</label>
+            <input type="number" id="sensitivity-input" class="input-field" value="${this.sensitivity}" min="1" max="20" step="0.5">
+          </div>
+
+          <p style="font-size: 10px; color: #666; margin-top: 10px;">Saved via Zustand Persistence</p>
           <hr style="border:0; border-top: 1px solid #333; margin: 20px 0;">
+          
           <h3>Social</h3>
           <div id="lobby-list">
              <!-- Players listed here -->
@@ -170,6 +186,7 @@ export class MenuSystem {
         </div>
 
         <div class="center-section">
+          <!-- ... rest of center section ... -->
           <div class="glass-panel">
             <h1>OFFICE FPS</h1>
             <p>Welcome back, ${this.playerName}</p>
@@ -191,13 +208,15 @@ export class MenuSystem {
             <div style="width:120px">
                <label>Map</label>
                <select id="new-room-map" class="input-field">
+                 <!-- Defaulting to deathmatch as requested -->
+                 <option value="deathmatch">Deathmatch</option> 
                  <option value="cyberpunk">Cyberpunk</option>
                  <option value="lowpoly">Low-Poly</option>
                </select>
             </div>
             <div style="width:100px">
                <label>Players</label>
-               <input type="number" id="new-room-players" class="input-field" value="2" min="1" max="8">
+               <input type="number" id="new-room-players" class="input-field" value="6" min="1" max="16">
             </div>
             <button id="create-room-btn" class="valorant-btn">Create Match</button>
           </div>
@@ -210,17 +229,37 @@ export class MenuSystem {
   }
 
   private setupListeners() {
-    const nameInput = document.getElementById("player-name-input") as HTMLInputElement;
-    nameInput.onchange = () => {
-      this.playerName = nameInput.value;
-      localStorage.setItem("playerName", this.playerName);
-      this.network.send("join-lobby", { name: this.playerName });
-    };
+    const nameInput = this.container.querySelector("#player-name-input") as HTMLInputElement;
 
-    document.getElementById("create-room-btn")?.addEventListener("click", () => {
-      const name = (document.getElementById("new-room-name") as HTMLInputElement).value || "Match";
-      const max = parseInt((document.getElementById("new-room-players") as HTMLInputElement).value);
-      const mapType = (document.getElementById("new-room-map") as HTMLSelectElement).value;
+    // Use 'input' to capture every keystroke
+    nameInput.addEventListener("input", () => {
+      this.playerName = nameInput.value;
+      // Update Store
+      useGameStore.getState().setPlayerName(this.playerName);
+    });
+
+    // Send update to server when done typing (blur) to avoid flooding network
+    nameInput.addEventListener("blur", () => {
+      this.network.send("join-lobby", { name: this.playerName });
+    });
+
+    const sensInput = this.container.querySelector("#sensitivity-input") as HTMLInputElement;
+    sensInput.addEventListener("input", () => {
+      const val = parseFloat(sensInput.value);
+      if (!isNaN(val)) {
+        this.sensitivity = val;
+        // Update Store
+        useGameStore.getState().setSensitivity(this.sensitivity);
+        console.log(`Zustand Saved Sens: ${this.sensitivity}`);
+      } else {
+        console.warn("Invalid sensitivity value, not saving.");
+      }
+    });
+
+    this.container.querySelector("#create-room-btn")?.addEventListener("click", () => {
+      const name = (this.container.querySelector("#new-room-name") as HTMLInputElement).value || "Match";
+      const max = parseInt((this.container.querySelector("#new-room-players") as HTMLInputElement).value);
+      const mapType = (this.container.querySelector("#new-room-map") as HTMLSelectElement).value;
       this.network.send("create-room", { name, maxPlayers: max, mapType });
     });
 

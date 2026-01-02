@@ -21,6 +21,7 @@ export class Player implements IPlayer {
     public isDead: boolean = false;
     public kills: number = 0;
     public mesh?: Mesh;
+    public visorMesh?: Mesh;
     public weaponMesh?: AbstractMesh;
     public currentWeaponType: string = "pistol";
     public animationGroups: AnimationGroup[] = [];

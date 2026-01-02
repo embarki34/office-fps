@@ -6,18 +6,18 @@ export class FPSController {
     public enabled: boolean = false;
     private scene: Scene;
 
-    // Movement settings
-    private baseMaxSpeed: number = 0.06;
+    // Movement settings - CS2 Style Tuned
+    private baseMaxSpeed: number = 0.09; // Reduced further for precision
     private mobilityMultiplier: number = 1.0;
-    private maxSpeed: number = 0.06;
+    private maxSpeed: number = 0.09;
     private velocity: Vector3 = Vector3.Zero();
-    private groundAccel: number = 0.053;
-    private airAccel: number = 0.04;
-    private groundFriction: number = 0.04;
-    private stopFriction: number = 0.25;
+    private groundAccel: number = 0.08; // Smoother acceleration
+    private airAccel: number = 0.5; // High air control for strafing (Source engine style)
+    private groundFriction: number = 0.12; // Balanced friction
+    private stopFriction: number = 0.3; // Instant stop when letting go
 
-    private jumpForce: number = 0.18;
-    private gravity: number = -0.018;
+    private jumpForce: number = 0.40; // Higher jump
+    private gravity: number = -0.020; // Stronger gravity for less "moon physics"
     private velocityY: number = 0;
     private isGrounded: boolean = true;
     private keys: { [key: string]: boolean } = {};
@@ -88,16 +88,28 @@ export class FPSController {
         const isMovingInput = wishDir.length() > 0;
         if (isMovingInput) wishDir.normalize();
 
+        // AUTO-BHOP LOGIC: If holding space and grounded, jump immediately
+        if (this.keys["Space"] && this.isGrounded) {
+            this.jump();
+        }
+
         if (this.isGrounded) {
+            // Only apply friction if we didn't just jump
             if (!isMovingInput) {
                 this.applyFriction(this.stopFriction, deltaTime);
             } else {
                 const isCounterStrafing = Vector3.Dot(wishDir, this.velocity) < 0;
-                if (isCounterStrafing) this.applyFriction(this.stopFriction, deltaTime);
+                if (isCounterStrafing) this.applyFriction(this.groundFriction, deltaTime);
                 this.accelerate(wishDir, this.maxSpeed, this.groundAccel, deltaTime);
             }
         } else {
+            // Air Strafing
+            // In air, we want full control over direction changes (high airAccel) 
+            // but we don't apply friction.
             const projectedSpeed = Vector3.Dot(this.velocity, wishDir);
+
+            // Allow gaining speed up to a limit (air strafe limit) or just maintaining momentum
+            // CS-style: accelerate only if not moving too fast in that direction
             if (projectedSpeed < this.maxSpeed) {
                 this.accelerate(wishDir, this.maxSpeed, this.airAccel, deltaTime);
             }
@@ -181,7 +193,11 @@ export class FPSController {
     }
 
     private applyFinalSensitivity() {
-        const baseSens = 29000 - (this.currentSensitivity * 450);
+        // BabylonJS: Higher angularSensibility = Slower rotation
+        // Formula: 4000 / (Sens / 10) roughly. 
+        // Let's use:
+        const baseSens = 40000 / (this.currentSensitivity || 1);
         this.camera.angularSensibility = baseSens / this.zoomSensitivityMultiplier;
+        console.log(`Applied Sens: ${this.camera.angularSensibility} (from setting: ${this.currentSensitivity})`);
     }
 }
